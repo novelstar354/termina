@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no"/>
+<title>HTML Linux Terminal PRO+</title>
+<style id="themeStyle">
+body{margin:0;background:#000;color:#0f0;font-family:monospace;font-size:16px;}
+#term{padding:10px;height:100vh;overflow-y:auto;white-space:pre-wrap;}
+.line{display:flex;flex-wrap:wrap;}
+.prompt{margin-right:6px;}
+input{background:transparent;border:none;outline:none;color:inherit;font-family:monospace;font-size:16px;flex:1;}
+.editor{background:#001100;padding:8px;margin:5px 0;}
+textarea{width:100%;height:200px;background:#000;color:#0f0;border:1px solid currentColor;font-family:monospace;}
+button{background:#003300;color:#0f0;border:1px solid currentColor;margin-top:4px;}
+@media (max-width:600px){body{font-size:14px;}textarea{height:150px;}}
+</style>
+</head>
+<body>
+<div id="term"></div>
+
+<script>
+const term=document.getElementById("term");
+const themeStyle=document.getElementById("themeStyle");
+
+let user="user";
+let currentPath="/home/user";
+let history=[],hIndex=0;
+let sudoMode=false;
+
+const themes={
+  green:`body{background:#000;color:#0f0;}
+         .editor{background:#001100;} button{background:#003300;}`,
+  white:`body{background:#fff;color:#000;}
+         .editor{background:#eee;} button{background:#ccc;color:#000;}`,
+  blue:`body{background:#001b2e;color:#4fc3f7;}
+        .editor{background:#002b40;} button{background:#003b55;}`,
+  dark:`body{background:#111;color:#ddd;}
+        .editor{background:#222;} button{background:#333;color:#ddd;}`
+};
+
+function setTheme(t){
+  localStorage.setItem("theme",t);
+  themeStyle.innerHTML+=themes[t]||"";
+}
+
+setTheme(localStorage.getItem("theme")||"green");
+
+let fs=JSON.parse(localStorage.getItem("fs"))||{
+  "/":{home:{}},
+  "/home":{user:{}},
+  "/home/user":{"readme.txt":"Terminal PRO+\nType help"}
+};
+
+function saveFS(){localStorage.setItem("fs",JSON.stringify(fs));}
+function print(t=""){term.innerText+=t+"\n";term.scrollTop=term.scrollHeight;}
+
+function resolve(path){
+  if(!path)return currentPath;
+  let full=path.startsWith("/")?path:currentPath+"/"+path;
+  let parts=full.split("/").filter(Boolean),stack=[];
+  for(let p of parts){
+    if(p==="..")stack.pop();
+    else if(p!==".")stack.push(p);
+  }
+  return "/"+stack.join("/");
+}
+
+function list(path){return fs[path]?Object.keys(fs[path]):null;}
+
+function newInput(){
+  const l=document.createElement("div");
+  l.className="line";
+  const p=document.createElement("span");
+  p.className="prompt";
+  p.textContent=`${user}@html:${currentPath}$`;
+  const i=document.createElement("input");
+  l.append(p,i);term.appendChild(l);i.focus();
+
+  i.onkeydown=e=>{
+    if(e.key==="Enter"){
+      const cmd=i.value.trim();
+      history.push(cmd);hIndex=history.length;
+      i.disabled=true;
+      handle(cmd);
+    }
+    if(e.key==="ArrowUp"){if(hIndex>0)i.value=history[--hIndex];}
+    if(e.key==="ArrowDown"){if(hIndex<history.length-1)i.value=history[++hIndex];else i.value="";}
+    if(e.key==="Tab"){e.preventDefault();tabComplete(i);}
+  };
+}
+
+function tabComplete(input){
+  const parts=input.value.split(" ");
+  const last=parts[parts.length-1];
+  const items=list(currentPath)||[];
+  const m=items.find(x=>x.startsWith(last));
+  if(m){parts[parts.length-1]=m;input.value=parts.join(" ");}
+}
+
+function nano(file){
+  const dir=fs[currentPath];
+  const box=document.createElement("div");
+  box.className="editor";
+  const ta=document.createElement("textarea");
+  ta.value=dir[file]||"";
+  const btn=document.createElement("button");
+  btn.textContent="Save & Exit";
+  btn.onclick=()=>{dir[file]=ta.value;saveFS();box.remove();newInput();};
+  box.append(ta,btn);term.appendChild(box);ta.focus();
+}
+
+function askSudo(cmd){
+  print("[sudo] password for "+user+":");
+  const i=document.createElement("input");
+  term.appendChild(i);i.focus();
+  i.onkeydown=e=>{
+    if(e.key==="Enter"){
+      if(i.value==="root"){
+        sudoMode=true;
+        print("Access granted.");
+        handle(cmd);
+      }else{
+        print("Sorry, try again.");
+        newInput();
+      }
+    }
+  };
+}
+
+function handle(cmd){
+  print("");
+  let [c,...rest]=cmd.split(" ");
+  let a=rest.join(" ");
+
+  if(c==="sudo"){ askSudo(a); return; }
+
+  if(["rm","mkdir","touch"].includes(c) && !sudoMode){
+    print("Permission denied. Try sudo.");
+    newInput();return;
+  }
+
+  sudoMode=false;
+
+  switch(c){
+    case "help":
+      print("ls cd pwd cat clear mkdir touch rm nano apt theme sudo help");
+      break;
+
+    case "ls": print((list(currentPath)||[]).join("   ")); break;
+    case "pwd": print(currentPath); break;
+
+    case "cd":{
+      const np=resolve(a||"/home/user");
+      if(fs[np]) currentPath=np; else print("No such directory");
+      break;
+    }
+
+    case "mkdir": fs[resolve(currentPath+"/"+a)]={}; saveFS(); break;
+    case "touch": fs[currentPath][a]=""; saveFS(); break;
+    case "rm": delete fs[currentPath][a]; saveFS(); break;
+
+    case "cat": print(fs[currentPath][a]||"File not found"); break;
+    case "nano": nano(a); return;
+
+    case "apt":
+      print("Reading package lists... Done");
+      print("Installing "+a+" ... Done");
+      break;
+
+    case "theme":
+      if(themes[a]){setTheme(a);print("Theme changed to "+a);}
+      else print("Themes: green, white, blue, dark");
+      break;
+
+    case "clear": term.innerText=""; break;
+
+    default: if(c) print("command not found: "+c);
+  }
+  newInput();
+}
+
+function login(){
+  print("HTML Linux Terminal PRO+");
+  print("login:");
+  const i=document.createElement("input");
+  term.appendChild(i);i.focus();
+  i.onkeydown=e=>{
+    if(e.key==="Enter"){
+      user=i.value||"user";
+      term.innerText="";
+      newInput();
+    }
+  };
+}
+
+login();
+</script>
+</body>
+</html>
